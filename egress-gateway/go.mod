@@ -31,7 +31,7 @@ require (
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/stripe/goproxy v0.0.0-20251009123132-ee3e713dae03 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
