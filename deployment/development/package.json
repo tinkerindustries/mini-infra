@@ -8,8 +8,8 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1",
-    "js-yaml": "^5.1.0",
-    "vitest": "^4.1.9"
+    "@types/node": "^26.1.2",
+    "js-yaml": "^5.2.2",
+    "vitest": "^4.1.10"
   }
 }
