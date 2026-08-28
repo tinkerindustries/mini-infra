@@ -80,7 +80,7 @@
         "express": "^5.2.1",
         "express-list-endpoints": "^7.1.1",
         "form-data": "^4.0.6",
-        "googleapis": "^173.0.0",
+        "googleapis": "^176.0.0",
         "helmet": "^8.2.0",
         "js-yaml": "^5.2.0",
         "jsonwebtoken": "^9.0.3",
