@@ -152,7 +152,7 @@ docker run --rm -v ${PWD}/zap-reports:/zap/wrk:rw `
 
 ### Testing Mini Infra Application
 
-Resolve the dev URL from `environment-details.xml` at the project root (written by `pnpm worktree-env start`) instead of hardcoding a port — each worktree instance listens on a different host port.
+Resolve the dev URL from `environment-details.xml` at the project root (written by the seeder during `wt start`) instead of hardcoding a port — each worktree instance listens on a different host port.
 
 **Development Environment:**
 ```bash

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 
-import type { SeedProfile } from './registry.js';
+import type { SeedProfile } from './paths.js';
 
 export interface XmlAdminDetails {
   email?: string;

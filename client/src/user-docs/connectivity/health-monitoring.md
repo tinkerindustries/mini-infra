@@ -104,7 +104,7 @@ Once a folder is selected, the **Default Postgres Backup Location**, **Self-Back
 
 #### Worktree dev gotcha
 
-Each Mini Infra worktree (`pnpm worktree-env start`) listens on a different host port (3100–3199), and Google Cloud Console does **not** accept wildcards in the **Authorized redirect URIs** field. The reliable workaround for dev:
+Each Mini Infra worktree (`wt start`) listens on a different host port (9200–9203, one per slot), and Google Cloud Console does **not** accept wildcards in the **Authorized redirect URIs** field. The reliable workaround for dev:
 
 1. Set up a stable Cloudflare tunnel hostname pointed at your worktree's UI port (or use a single shared dev hostname and re-point the tunnel between worktrees).
 2. Register that one stable URL in your Google Cloud Console once.

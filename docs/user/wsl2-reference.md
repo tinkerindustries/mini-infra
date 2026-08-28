@@ -12,7 +12,7 @@ For our use case:
 - The distro is cloned from a cached Alpine + dockerd tarball at `~\.mini-infra\wsl-base.tar`.
 - ~250 MB on disk per worktree (Alpine + dockerd installed).
 - ~60 MB idle RAM per worktree (shared kernel keeps overhead low).
-- Each distro hosts dockerd on a dedicated TCP port (range 2500–2599) plus a unix socket inside the distro.
+- Each distro hosts dockerd on a dedicated TCP port (9230 + slot) plus a unix socket inside the distro.
 
 ## Installation
 
@@ -34,7 +34,7 @@ Docker Desktop is **not** required and **not** recommended — it would conflict
 
 ## Building the Base Tarball
 
-One-time, before your first `pnpm worktree-env start`:
+One-time, before your first `wt init`:
 
 ```powershell
 .\scripts\build-wsl-base.ps1
@@ -49,14 +49,15 @@ Re-run with `-Force` to refresh after Alpine or dockerd updates. Pass `-AlpineVe
 Same commands as the macOS flow — see [CLAUDE.md](../../CLAUDE.md). The unified CLI works the same on Windows:
 
 ```powershell
-pnpm worktree-env start --description "auth refactor"
-pnpm worktree-env start --description "auth refactor" --seed-profile minimal
-pnpm worktree-env list
-pnpm worktree-env delete <profile>
-pnpm worktree-env cleanup --dry-run
+wt init --description "auth refactor"
+wt init --description "auth refactor" --param seed_profile=minimal
+wt start
+wt list
+wt rm --slug <slug>
+wt cleanup --dry-run
 ```
 
-`--seed-profile minimal` skips the vault+nats stack, the egress-fw-agent stack, the local environment (and its egress-gateway), and the HAProxy stack — the per-distro dockerd ends up with just the mini-infra container. `--seed-profile full` (default) is the historical seeding behaviour. The chosen profile is stored in `~/.mini-infra/worktrees.yaml` so subsequent re-runs of `worktree-env start` without the flag reuse it.
+`seed_profile=minimal` skips the vault+nats stack, the egress-fw-agent stack, the local environment (and its egress-gateway), and the HAProxy stack — the per-distro dockerd ends up with just the mini-infra container. `full` (the default) seeds everything. The parameter is sticky: worktree-manager records it in `wt-env.yaml`, so later `wt start` runs reuse it.
 
 The orchestrator auto-detects driver: `wsl` on Windows, `colima` on macOS. Override with `MINI_INFRA_DRIVER=wsl` (or `colima`) if you need to.
 
@@ -84,7 +85,7 @@ wsl -d mini-infra-strange-ride-7c8285 -- ps aux | findstr dockerd
 wsl -d mini-infra-strange-ride-7c8285 -- cat /var/log/mini-infra/dockerd.log
 
 # Docker info via the TCP listener (from Windows)
-$env:DOCKER_HOST = "tcp://localhost:2500"
+$env:DOCKER_HOST = "tcp://localhost:9231"   # 9230 + slot; `wt show` prints yours
 docker info
 ```
 
@@ -103,7 +104,7 @@ Apply with `wsl --shutdown` then start a distro again. Unlike Colima, you cannot
 
 ## Networking — How `localhost:<port>` Reaches the Distro
 
-WSL2's `localhostForwarding` feature (default on) automatically forwards `127.0.0.1:<port>` from Windows to whichever distro is binding that port. That's how `http://localhost:3100` reaches the mini-infra container, how `tcp://localhost:2500` reaches dockerd, and so on. If forwarding ever breaks, check `~\.wslconfig`:
+WSL2's `localhostForwarding` feature (default on) automatically forwards `127.0.0.1:<port>` from Windows to whichever distro is binding that port. That's how `http://localhost:9201` reaches the mini-infra container, how `tcp://localhost:9231` reaches dockerd, and so on. If forwarding ever breaks, check `~\.wslconfig`:
 
 ```ini
 [wsl2]
@@ -117,23 +118,23 @@ localhostForwarding=true
 The friendly path — `compose down -v`, unregister the distro, remove the install dir, and drop the registry entry in one shot:
 
 ```powershell
-pnpm worktree-env delete <profile>
+wt rm --slug <slug>
 # add --force to skip the confirmation prompt
 # add --keep-vm to drop containers + registry entry only, leaving the distro up
-pnpm worktree-env start --description "..."
+wt start
 ```
 
 The raw equivalent (skips compose-down and the registry update):
 
 ```powershell
 wsl --unregister mini-infra-<profile>
-pnpm worktree-env start --description "..."
+wt start
 ```
 
 ### Reset only data (keep distro)
 
 ```powershell
-pnpm worktree-env start --reset --profile <profile>
+pnpm worktree-env down --volumes && wt start
 ```
 
 ### Stop everything quickly
@@ -142,7 +143,7 @@ pnpm worktree-env start --reset --profile <profile>
 wsl --shutdown
 ```
 
-Restarts on the next `pnpm worktree-env start`.
+Restarts on the next `wt start`.
 
 ### List all Mini Infra distros
 
@@ -174,7 +175,7 @@ Check `wsl -d mini-infra-<profile> -- cat /var/log/mini-infra/dockerd.log`. Most
 **`localhost:<port>` doesn't reach the distro.**
 Ensure `localhostForwarding=true` in `~\.wslconfig`, then `wsl --shutdown` and try again.
 
-**Distro shows status `Stopped` but `pnpm worktree-env start` says it's running.**
+**Distro shows status `Stopped` but `wt start` says it's running.**
 The orchestrator triggers a start when needed. If it consistently misdetects state, manually `wsl --terminate` the distro and re-run.
 
 **"docker.exe is not recognized."**
@@ -183,11 +184,11 @@ Install the static Docker CLI binary (see [Installation](#installation)). Don't 
 **Containers on the same env's applications network can't reach each other.**
 Symptom: TCP connects time out and ICMP fails between two containers that `docker network inspect <env>-applications` confirms are on the same network. `iptables -L DOCKER-USER` is just `RETURN` and doesn't drop anything. Likely cause: an orphaned `br-<id>` bridge is shadowing the real one in the kernel's FIB. Because every WSL2 distro shares one network namespace, a previous worktree's leftover bridge can win the route lookup for the same subnet, sending packets out via empty veths.
 
-This used to happen routinely between *running* sibling worktrees because two daemons could independently pick the same `/24` for their `local-applications` network. That class of collision is now prevented by construction: each worktree is given its own `/22` slice of `172.30.0.0/16`, keyed off the same slot as its ports. Slot 0 → `172.30.0.0/22`, slot 1 → `172.30.4.0/22`, …, slot 63 → `172.30.252.0/22`. The slice is passed into the container as `MINI_INFRA_EGRESS_POOL_CIDR` and the server allocates `/24`s only from inside it. You can verify the assignment with `pnpm worktree-env list --wide` (look at the `EGRESS POOL` column) or `xmllint --xpath 'string(//environment/egressPool)' environment-details.xml`.
+This used to happen routinely between *running* sibling worktrees because two daemons could independently pick the same `/24` for their `local-applications` network. That class of collision is now prevented by construction: each worktree is given its own `/22` slice of `172.30.0.0/16`, keyed off the same slot as its ports. Slot 1 → `172.30.0.0/22`, slot 2 → `172.30.4.0/22`, and so on. The slice is passed into the container as `MINI_INFRA_EGRESS_POOL_CIDR` and the server allocates `/24`s only from inside it. You can verify the assignment with `wt show` or `xmllint --xpath 'string(//environment/egressPool)' environment-details.xml`.
 
-If a worktree ends up at slot ≥ 64 (more than 64 lifetime worktrees in `~/.mini-infra/worktrees.yaml`), the start-up script logs a `Worktree slot N exceeds per-worktree egress pool capacity` warning and falls back to the shared `172.30.0.0/16` default — collisions with siblings become possible again. Run `pnpm worktree-env cleanup` to reclaim old slots and clear the warning.
+The pool holds 64 blocks and [wt.yaml](../../wt.yaml) caps the repository at 4 slots, so exhaustion is not reachable. If the ceiling is ever raised past 64, the `cidr` resource's `on_exhaustion: shared-pool` falls back to the shared `172.30.0.0/16` and collisions between siblings become possible again.
 
-Migration corner case: existing worktrees keep their already-allocated `local-applications` subnets across restarts (the server reuses the network's IPAM config rather than reallocating). If an old subnet sits *outside* the new pool for that worktree's slot, the worktree itself keeps working but a *different* worktree may later pick the same `/24` for a fresh env. Re-run `pnpm worktree-env start --reset` for a clean cutover.
+Migration corner case: existing worktrees keep their already-allocated `local-applications` subnets across restarts (the server reuses the network's IPAM config rather than reallocating). If an old subnet sits *outside* the new pool for that worktree's slot, the worktree itself keeps working but a *different* worktree may later pick the same `/24` for a fresh env. Run `pnpm worktree-env down --volumes` then `wt start` for a clean cutover.
 
 Diagnose a suspected orphan-bridge case:
 
@@ -207,7 +208,7 @@ wsl -l -v | findstr mini-infra-
 wsl -d mini-infra-<other> -- docker network ls -q --no-trunc | cut -c1-12
 ```
 
-`pnpm worktree-env delete` and `pnpm worktree-env cleanup` already sweep orphans automatically before unregistering. As a last-resort manual recovery for a bridge that survived a partial teardown:
+`wt rm` and `wt cleanup` already tear the stack down and delete the distro before deallocating. As a last-resort manual recovery for a bridge that survived a partial teardown:
 
 ```powershell
 wsl -d mini-infra-<profile> -- ip link delete br-<id>

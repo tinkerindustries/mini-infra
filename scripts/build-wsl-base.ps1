@@ -192,4 +192,4 @@ finally {
     }
 }
 
-Write-Ok 'Done. Run `pnpm worktree-env start` next.'
+Write-Ok 'Done. Run `wt init --description "<what this worktree is for>"` next.'

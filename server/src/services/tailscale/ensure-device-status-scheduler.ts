@@ -10,7 +10,7 @@ const logger = getLogger("integrations", "tailscale-device-status-scheduler");
  * current state of the Tailscale OAuth credentials.
  *
  * Why this exists: the scheduler used to be wired up only at server boot. In
- * the worktree-env startup flow (and any deployment where Tailscale gets
+ * the dev worktree startup flow (and any deployment where Tailscale gets
  * configured *after* the app is already running), boot ran while the
  * credentials were still null — the scheduler was skipped, and the panel kept
  * showing 0 devices forever because nothing re-ran the init when the

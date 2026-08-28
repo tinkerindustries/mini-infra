@@ -73,7 +73,7 @@ screenshots/
 # Agent scratch directories
 .agents/
 .codex/
-.claude/worktrees/
+/.claude/worktrees/
 
 # Python artifacts (pg-az-backup)
 __pycache__/
@@ -82,7 +82,12 @@ __pycache__/
 
 .claude/scheduled_tasks.lock
 
-# Per-worktree dev environment snapshot written by deployment/development/worktree_start.sh
+# Per-worktree environment, written by worktree-manager (`wt init`).
+# See docs/wt.md.
+wt-env.yaml
+
+# Per-worktree dev environment snapshot written by the seeder (`wt start`).
+# Holds the instance's admin credentials and API key — never commit it.
 environment-details.xml
 # Local debugging target + API key (never commit — contains a live key)
 environment-config.xml

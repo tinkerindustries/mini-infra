@@ -1,0 +1,208 @@
+# Mini Infra's committed spec — the adoption signal for this repository.
+# Shape per worktree-manager's docs/design/03-drivers.md §3.1; the reasoning
+# behind each choice is in docs/wt-decision-record.md.
+#
+# Every worktree of this repository runs a full Mini Infra instance inside
+# its own Colima VM (WSL2 distro on Windows). The VM boundary is what makes
+# most of the app free: the Docker socket, the compose volumes, the
+# `/var/run/mini-infra` fw-agent socket, the HAProxy admin socket and every
+# Docker network live inside that VM and cannot reach another worktree's.
+#
+# What is left over is what this spec allocates: the host ports the VM
+# forwards, the VM's own name, the compose project, and the egress address
+# pool the VM's dockerd carves bridge networks from.
+version: 1
+app: mini-infra
+
+# Four concurrent worktrees. Each one is a VM running its own dockerd, and
+# past roughly four the daemons exhaust Docker's default bridge address
+# pool — the same ceiling the retired allocator enforced for WSL2.
+slots:
+  max: 4
+
+resources:
+  # ---- Host ports -------------------------------------------------------
+  # Ten independent stride resources: port = base + slot. Each gets its own
+  # band base, because nothing in the app depends on a fixed offset between
+  # any two of them.
+
+  # The Mini Infra UI and API, published by the app container.
+  - type: port
+    name: ui
+  # The per-worktree image registry the stack reconciler pulls from.
+  - type: port
+    name: registry
+  # The vault stack's host-port parameter.
+  - type: port
+    name: vault
+  # dockerd over TCP inside the WSL2 distro. Unused by the Colima driver,
+  # which reaches dockerd over a unix socket, but allocated on both so a
+  # descriptor is portable across drivers.
+  - type: port
+    name: docker
+  # The haproxy stack's four host ports, overriding the template's
+  # 80/443/8404/5555 defaults so two worktrees can both run an HAProxy.
+  - type: port
+    name: haproxy_http
+  - type: port
+    name: haproxy_https
+  - type: port
+    name: haproxy_stats
+  - type: port
+    name: haproxy_dataplane
+  # The nats stack's two host ports.
+  - type: port
+    name: nats_client
+  - type: port
+    name: nats_monitor
+
+  # ---- The VM -----------------------------------------------------------
+  # One Colima profile (WSL2 distro on Windows) per worktree, created and
+  # destroyed by the machine driver. `max_concurrent` is the guard that
+  # stops a fifth dockerd being started; the ceiling and slots.max agree on
+  # purpose.
+  - type: machine
+    name: vm
+    driver: auto
+    template: "{app}-{slug}-{slot}"
+    max_concurrent: 4
+    keep_flag: "--keep-vm"
+
+  # ---- The egress address pool -----------------------------------------
+  # A /22 per worktree out of 172.30.0.0/16 — 64 blocks, so it outlasts the
+  # 4-slot ceiling by a wide margin. The server's egress-network-allocator
+  # reads MINI_INFRA_EGRESS_POOL_CIDR and is size-agnostic, so a /22 gives
+  # it four /24 slots to hand out.
+  - type: cidr
+    name: egress
+    pool: 172.30.0.0/16
+    size: 22
+    on_exhaustion: shared-pool
+
+  # The compose project is deliberately NOT a resource. It lives inside the
+  # per-worktree VM, so two worktrees cannot collide on it whatever it is
+  # called, and declaring it made teardown depend on a daemon that teardown
+  # itself destroys: the namespace driver runs `compose down` against the
+  # worktree's dockerd, the machine driver then deletes the VM that dockerd
+  # lives in, and a retry can never reach it again — the slot stays held
+  # forever. It is also blocked by the agent-sidecar and egress-fw-agent
+  # containers, which the server creates through the Docker API at runtime
+  # and which are therefore not part of the compose project.
+  #
+  # The name is still deterministic and still derived from the slot: the
+  # .env managed block below resolves it from {app}, {slug} and {slot}
+  # directly. Deleting the VM is what removes the containers, the networks
+  # and the volumes, all at once.
+
+# The machine-global resources this repository reaches and does not isolate.
+# Each is a deliberate act by the developer, not something a worktree does on
+# its own.
+shared:
+  - name: "{home}/.mini-infra/dev.env"
+    impact: >-
+      the seeder's credentials — admin login, Azure connection string,
+      Cloudflare API token, GitHub token, Tailscale OAuth. Every worktree
+      seeds from this one file, so every instance shares the same admin
+      account and the same external tenants. Editing it changes what the
+      next seed of every worktree produces.
+  - name: "{home}/.mini-infra/wsl-base.tar"
+    impact: >-
+      the cached Alpine + dockerd base tarball every WSL2 distro is imported
+      from (Windows only). Rebuilding it with scripts/build-wsl-base.ps1
+      changes what every future worktree's VM starts from.
+  - name: "the Cloudflare zone named by dev.env's CLOUDFLARE_API_TOKEN"
+    impact: >-
+      DNS records and ACME DNS-01 challenge records are written into one
+      real zone. Two worktrees deploying a stack on the same hostname fight
+      over the same record, and Let's Encrypt's rate limits are per
+      registered domain across every worktree on this machine.
+  - name: "the Azure Blob Storage account named by dev.env's AZURE_STORAGE_CONNECTION_STRING"
+    impact: >-
+      TLS certificate material and PostgreSQL backups from every worktree
+      land in the same storage account.
+
+# The reaper's allowlist: deliberately empty. Nothing this repository builds
+# holds a worktree's host port — the listener is always Colima's port
+# forwarder or Docker Desktop's backend, and those are the machine's, not a
+# worktree's. A spec that names nothing signals nothing, which is the right
+# answer here: teardown reaches the containers through the machine driver
+# deleting the VM.
+reaper:
+  binaries: []
+
+# Every change in this repository is submitted as a pull request, so both
+# checks that default to warn are raised to refuse. `gh` is a hard
+# requirement for removal as a result.
+removal:
+  unpushed: refuse
+  open_pr: refuse
+
+hooks:
+  # The machine driver created and started the Colima profile with the
+  # platform's defaults; this hook waits for its dockerd, resizes the VM if
+  # it came up under-provisioned, and syncs host-side node modules. Minutes,
+  # not seconds, on a cold VM.
+  install:
+    run: pnpm worktree-env provision
+    timeout: 20m
+  # alpine:latest is what the stack reconciler spawns for ephemeral helpers
+  # (volume inspection, file catalogues); pulling it now keeps the first
+  # such operation from stalling.
+  prepull:
+    run: pnpm worktree-env prepull
+    timeout: 10m
+  # The sidecar and egress images, built and pushed into this worktree's own
+  # registry, then the app image.
+  build:
+    run: pnpm worktree-env build
+    timeout: 30m
+  start:
+    run: pnpm worktree-env up
+    timeout: 20m
+  # The seeder: admin user, connected services, and — on the full profile —
+  # the vault+nats stacks, the egress fw-agent, the local environment and
+  # HAProxy. The profile is chosen on first init and reused after that.
+  seed:
+    run: pnpm worktree-env seed --seed-profile {seed_profile}
+    timeout: 30m
+    params:
+      seed_profile:
+        sticky: true
+        default: full
+  # The app container's own health endpoint, reached through the published
+  # UI port. Polled until the container reports healthy.
+  health:
+    run: pnpm worktree-env health
+    timeout: 5m
+
+emit:
+  descriptor:
+    filename: wt-env.yaml
+    format: yaml
+  # The managed block in the worktree's .env. These are also what the hook
+  # environment carries, which is how deployment/development/ learns its
+  # allocation now that it no longer allocates anything itself.
+  #
+  # DOCKER_HOST is deliberately absent: it is unix://{home}/.colima/{vm}/
+  # docker.sock under Colima and tcp://localhost:{docker} under WSL2, and a
+  # static template cannot branch on the driver. The TypeScript derives it
+  # from MINI_INFRA_VM and DOCKER_PORT instead.
+  env:
+    path: .env
+    seed: false
+    keys:
+      MINI_INFRA_SLOT: "{slot}"
+      MINI_INFRA_SLUG: "{slug}"
+      MINI_INFRA_VM: "{vm}"
+      COMPOSE_PROJECT_NAME: "{app}-{slug}-{slot}"
+      UI_PORT: "{ui}"
+      REGISTRY_PORT: "{registry}"
+      VAULT_PORT: "{vault}"
+      DOCKER_PORT: "{docker}"
+      HAPROXY_HTTP_PORT: "{haproxy_http}"
+      HAPROXY_HTTPS_PORT: "{haproxy_https}"
+      HAPROXY_STATS_PORT: "{haproxy_stats}"
+      HAPROXY_DATAPLANE_PORT: "{haproxy_dataplane}"
+      NATS_CLIENT_PORT: "{nats_client}"
+      NATS_MONITOR_PORT: "{nats_monitor}"
+      EGRESS_POOL_CIDR: "{egress}"

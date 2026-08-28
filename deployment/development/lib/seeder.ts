@@ -36,7 +36,7 @@ import {
   type StackSummary,
 } from './env-details.js';
 import { logInfo, logOk, logError, logSkip } from './log.js';
-import type { SeedProfile } from './registry.js';
+import type { SeedProfile } from './paths.js';
 
 export interface SeederInput {
   uiPort: number;

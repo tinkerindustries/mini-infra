@@ -174,19 +174,19 @@ colima list
 
 ### Pick the seed profile when spinning up
 
-`pnpm worktree-env start` accepts `--seed-profile minimal|full`:
+The seed hook accepts a `seed_profile` of `minimal` or `full`, chosen on first init with `wt init --param seed_profile=minimal`:
 
 - `--seed-profile full` (default on first run) seeds vault+nats, the egress-fw-agent stack, the local environment with its egress-gateway, and the HAProxy stack — everything needed to exercise the full app.
 - `--seed-profile minimal` stops after the admin user, connected services, and onboarding-complete steps. None of the four stacks above are created, so the per-profile VM stays light when you're working on parts of the app that don't touch them.
 
-The chosen profile is persisted in `~/.mini-infra/worktrees.yaml` for the worktree, so subsequent re-runs without the flag reuse the same value. View the stored profile via `pnpm worktree-env list` (the `SEED` column).
+The parameter is sticky: worktree-manager records it in the worktree's `wt-env.yaml`, so later `wt start` runs reuse it without the flag. `wt show` prints the stored value, and so does `<seedProfile>` in `environment-details.xml`.
 
 ### Tear down a worktree's profile completely
 
 The friendly path — wipes the Compose project (containers + volumes), deletes the Colima VM, and removes the registry entry:
 
 ```bash
-pnpm worktree-env delete <profile>
+wt rm --slug <slug>
 # add --force to skip the confirmation prompt
 # add --keep-vm to drop containers + registry entry only, leaving the VM up
 ```

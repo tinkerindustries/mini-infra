@@ -30,7 +30,7 @@ ENV_XML="$ROOT/environment-details.xml"
 
 if [[ ! -f "$ENV_XML" ]]; then
   echo "error: environment-details.xml not found at $ENV_XML" >&2
-  echo "       run \`pnpm worktree-env start\` first" >&2
+  echo "       run \`wt start\` first" >&2
   exit 1
 fi
 
