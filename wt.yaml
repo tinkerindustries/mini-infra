@@ -79,15 +79,20 @@ resources:
     size: 22
     on_exhaustion: shared-pool
 
-  # ---- The compose project ---------------------------------------------
-  # Container, network and volume namespacing inside the VM. The VM already
-  # isolates these, so this is belt and braces — and it is what makes
-  # `docker ps` legible when a stray docker context points at the wrong VM.
-  - type: namespace
-    name: compose
-    kind: compose
-    template: "{app}-{slug}-{slot}"
-    files: [deployment/development/docker-compose.worktree.yaml]
+  # The compose project is deliberately NOT a resource. It lives inside the
+  # per-worktree VM, so two worktrees cannot collide on it whatever it is
+  # called, and declaring it made teardown depend on a daemon that teardown
+  # itself destroys: the namespace driver runs `compose down` against the
+  # worktree's dockerd, the machine driver then deletes the VM that dockerd
+  # lives in, and a retry can never reach it again — the slot stays held
+  # forever. It is also blocked by the agent-sidecar and egress-fw-agent
+  # containers, which the server creates through the Docker API at runtime
+  # and which are therefore not part of the compose project.
+  #
+  # The name is still deterministic and still derived from the slot: the
+  # .env managed block below resolves it from {app}, {slug} and {slot}
+  # directly. Deleting the VM is what removes the containers, the networks
+  # and the volumes, all at once.
 
 # The machine-global resources this repository reaches and does not isolate.
 # Each is a deliberate act by the developer, not something a worktree does on
@@ -189,7 +194,7 @@ emit:
       MINI_INFRA_SLOT: "{slot}"
       MINI_INFRA_SLUG: "{slug}"
       MINI_INFRA_VM: "{vm}"
-      COMPOSE_PROJECT_NAME: "{compose}"
+      COMPOSE_PROJECT_NAME: "{app}-{slug}-{slot}"
       UI_PORT: "{ui}"
       REGISTRY_PORT: "{registry}"
       VAULT_PORT: "{vault}"

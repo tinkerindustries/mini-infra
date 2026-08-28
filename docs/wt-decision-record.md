@@ -28,7 +28,7 @@ What is left is what the spec allocates.
 | Ten host ports (ui, registry, vault, docker, four haproxy, two nats) | isolate — one band base each |
 | The Colima profile / WSL2 distro | isolate — `machine` |
 | The egress address pool | isolate — `cidr`, a /22 per worktree |
-| The compose project | isolate — `namespace` |
+| The compose project | **not modelled** — see Phase 7 below |
 | `~/.mini-infra/worktrees.yaml` | retired — worktree-manager's registry replaces it |
 | `~/.mini-infra/dev.env` | share |
 | `~/.mini-infra/wsl-base.tar` | share |
@@ -141,18 +141,75 @@ are all that survived of it.
 
 Two behaviours worth recording:
 
-**The VM comes up under-provisioned.** worktree-manager's machine driver runs
-plain `colima start <name>`, which uses Colima's own defaults (2 CPU, 2 GiB)
-— not enough to build and run the stack. The provision stage detects an
-under-sized profile from `colima list --json` and restarts it once at 2 CPU
-and 8 GiB, preferring `vz` + `virtiofs` and falling back to the portable
-defaults.
+**The provision stage owns the VM being up and correctly sized.** The
+machine driver owns the VM's name, the concurrency guard and teardown, and
+it starts the VM detached — a cold VM takes minutes and blocking
+materialisation on it would stall `wt init`. Three cases follow, and
+provision handles all of them: the profile is mid-creation, so it waits;
+the profile is already there, so it checks the size; or the driver started
+nothing at all, which happens when the machine resource is already
+materialised and only the VM has gone away, so provision creates it.
+
+Sizing is the reason the last case matters. A bare `colima start` takes
+Colima's own defaults, 2 CPU and 2 GiB, which is not enough to build and
+run the stack — the client build dies with a buildkit RPC error rather
+than anything that names memory. Provision starts the VM at 2 CPU and
+8 GiB, preferring `vz` + `virtiofs` and falling back to the portable
+defaults, and restarts an under-sized profile once to correct it.
+
+A `machine` resource's presence in the registry does not imply a running
+VM. That is the property the install hook has to own.
 
 **On Windows the distro does not exist yet.** The WSL2 machine driver starts
 a distro that already exists but does not import one, so a first bring-up
 finds nothing registered. The provision stage imports it from the cached base
 tarball under the name wt allocated. Teardown is unaffected —
 `wsl --unregister` works once the distro exists.
+
+## Phase 7 — what the proof changed
+
+Two worktrees were brought up side by side and both served at once: slots
+1 and 2, all twelve resources disjoint, both `/health` endpoints answering
+on 9201 and 9202 with the full seed profile applied — Vault on 9221/9222,
+NATS on 9281/9282, HAProxy on 9241/9242 and the rest. The ports were not
+merely allocated; each stack template took the one the spec gave it.
+
+The proof changed the spec once.
+
+**The compose project was declared as a `namespace` resource and is not
+any more.** Teardown surfaced why. The namespace driver runs
+`docker compose -p <project> down` against the worktree's own dockerd, and
+that dockerd lives inside the VM the `machine` resource owns. Two failures
+follow from that:
+
+- `compose down` leaves the network in place while the agent-sidecar and
+  egress-fw-agent containers are still attached. The server creates those
+  through the Docker API at runtime, so they are not part of the compose
+  project and `down` does not touch them. Teardown stopped with
+  `network ... has active endpoints` before the VM was deleted.
+- Once the VM is gone, the compose teardown can never succeed again — the
+  daemon it needs no longer exists. The entry stuck in `tearing-down` and
+  the slot could not be reclaimed. Recovering it meant recreating a VM
+  under the old name purely so the teardown had something to talk to.
+
+The compose project was never a contended resource. It lives inside a
+per-worktree VM, so two worktrees cannot collide on it whatever it is
+called, and deleting the VM removes the containers, networks and volumes
+together. Declaring it bought nothing and made teardown depend on
+something teardown destroys.
+
+The name is still deterministic and still slot-derived: `emit.env.keys`
+resolves `COMPOSE_PROJECT_NAME` from `{app}-{slug}-{slot}` directly, and
+`lib/allocation.ts` evaluates the same template when it reads the
+descriptor instead of the hook environment.
+
+**A latent bug in the repository also surfaced here.** The dev compose
+healthcheck probed `localhost:5000`, the registry service's internal port,
+while the app listens on 5005. The container had been marked unhealthy
+since the healthcheck was added, and nothing noticed because the old
+bring-up ran `compose up -d` and polled the UI port from the host. The
+`up` stage uses `compose up -d --wait`, which reads the container's health
+status, so it failed immediately and made the mismatch obvious.
 
 ## Phase 8 — what was imported
 

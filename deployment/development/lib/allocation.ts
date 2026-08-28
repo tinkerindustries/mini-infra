@@ -77,6 +77,7 @@ interface DescriptorShape {
   found?: boolean;
   reason?: string;
   descriptor?: {
+    app?: string;
     slug?: string;
     slot?: number;
     resources?: Record<string, { type?: string; value?: string | number }>;
@@ -155,11 +156,19 @@ export function loadAllocation(projectRoot: string): Allocation {
   const r = d.resources || {};
   const val = (name: string): string | number | undefined => r[name]?.value;
 
+  // The compose project is not a resource — it lives inside the worktree's own
+  // VM, so nothing can collide with it. wt.yaml resolves the same name into
+  // COMPOSE_PROJECT_NAME from {app}, {slug} and {slot}; this is that template
+  // evaluated against the descriptor, so both paths produce one name.
+  const slug = requireString(d.slug, 'slug');
+  const slot = requireNumber(d.slot, 'slot');
+  const app = requireString(d.app, 'app');
+
   return {
-    slug: requireString(d.slug, 'slug'),
-    slot: requireNumber(d.slot, 'slot'),
+    slug,
+    slot,
     vm: requireString(val('vm'), 'vm'),
-    composeProject: requireString(val('compose'), 'compose'),
+    composeProject: `${app}-${slug}-${slot}`,
     egressPoolCidr: requireString(val('egress'), 'egress'),
     uiPort: requireNumber(val('ui'), 'ui'),
     registryPort: requireNumber(val('registry'), 'registry'),

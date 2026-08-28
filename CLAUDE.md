@@ -237,7 +237,7 @@ These are the most commonly missed patterns. See `server/CLAUDE.md` for the full
 # wt-field: band ui=9200
 # wt-field: band vault=9220
 # wt-field: descriptor=wt-env.yaml
-# wt-field: resources=ui, registry, vault, docker, haproxy_http, haproxy_https, haproxy_stats, haproxy_dataplane, nats_client, nats_monitor, vm, egress, compose
+# wt-field: resources=ui, registry, vault, docker, haproxy_http, haproxy_https, haproxy_stats, haproxy_dataplane, nats_client, nats_monitor, vm, egress
 # wt-field: shared={home}/.mini-infra/dev.env, {home}/.mini-infra/wsl-base.tar, the Cloudflare zone named by dev.env's CLOUDFLARE_API_TOKEN, the Azure Blob Storage account named by dev.env's AZURE_STORAGE_CONNECTION_STRING
 # wt-field: worktrees=.claude/worktrees/{slug}
 This repository uses per-worktree environments.
