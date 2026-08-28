@@ -296,6 +296,40 @@ export async function provision(ctx: StageContext): Promise<void> {
   }
 }
 
+/**
+ * Wait for a Colima profile to exist and stop changing state.
+ *
+ * The machine driver's `colima start` runs detached, so this hook can arrive
+ * before the profile is listed at all. Two waits, in order: for the profile
+ * to appear, then for it to leave the transitional states. A profile that
+ * settles as Stopped is still a usable answer — the caller starts it at the
+ * size Mini Infra needs.
+ */
+async function waitForColimaProfile(
+  name: string,
+  appearSeconds = 300,
+  settleSeconds = 900,
+): Promise<ColimaInstance | null> {
+  let inst = colimaInstance(name);
+  for (let i = 0; !inst && i < appearSeconds; i++) {
+    if (i === 0) logInfo(`Waiting for the machine driver to create Colima profile '${name}'...`);
+    else if (i % 30 === 0) logInfo(`Still waiting for profile '${name}'... (${i}s)`);
+    await sleep(1000);
+    inst = colimaInstance(name);
+  }
+  if (!inst) return null;
+
+  for (let i = 0; i < settleSeconds; i++) {
+    const status = (inst?.status || '').toLowerCase();
+    if (status === 'running' || status === 'stopped') return inst;
+    if (i % 30 === 0) logInfo(`Profile '${name}' is ${inst?.status || 'unknown'}... (${i}s)`);
+    await sleep(1000);
+    inst = colimaInstance(name);
+    if (!inst) return null;
+  }
+  return inst;
+}
+
 async function provisionColima(ctx: StageContext): Promise<void> {
   const { alloc, dockerSocket } = ctx;
   if (!commandExists('colima')) {
@@ -304,23 +338,39 @@ async function provisionColima(ctx: StageContext): Promise<void> {
   }
 
   const wantMemoryBytes = COLIMA_MEMORY_GIB * 1024 * 1024 * 1024;
-  const inst = colimaInstance(alloc.vm);
+
+  // worktree-manager's machine driver launches `colima start` and returns
+  // without waiting — a cold VM takes minutes, and blocking materialisation
+  // on it would stall `wt init`. So the profile is very likely still being
+  // created when this hook runs: wait for it to appear and settle rather
+  // than reading `colima list` once and giving up.
+  const inst = await waitForColimaProfile(alloc.vm);
   if (!inst) {
     logError(
-      `Colima profile '${alloc.vm}' does not exist. worktree-manager's machine driver creates it — ` +
-        `check 'wt show' and 'wt doctor', then re-run 'wt start'.`,
+      `Colima profile '${alloc.vm}' never appeared. worktree-manager's machine driver creates it ` +
+        `in the background — check 'wt doctor', then 'colima start ${alloc.vm}' by hand to see why.`,
     );
     process.exit(1);
   }
 
   const underProvisioned =
     (inst.cpus ?? 0) < COLIMA_CPUS || (inst.memory ?? 0) < wantMemoryBytes;
-  if (underProvisioned) {
-    logInfo(
-      `Colima profile '${alloc.vm}' is under-provisioned ` +
-        `(${inst.cpus ?? '?'} CPU, ${Math.round((inst.memory ?? 0) / 1024 ** 3)}G) — ` +
-        `restarting at ${COLIMA_CPUS} CPU / ${COLIMA_MEMORY_GIB}G...`,
-    );
+  const running = (inst.status || '').toLowerCase() === 'running';
+
+  // The machine driver runs a bare `colima start`, which takes Colima's own
+  // defaults — 2 GiB of memory, which is not enough to build and run the
+  // stack. Restart it once, at the size Mini Infra needs. A profile that is
+  // merely stopped gets the same treatment, which is what starts it.
+  if (underProvisioned || !running) {
+    if (underProvisioned) {
+      logInfo(
+        `Colima profile '${alloc.vm}' is under-provisioned ` +
+          `(${inst.cpus ?? '?'} CPU, ${Math.round((inst.memory ?? 0) / 1024 ** 3)}G) — ` +
+          `restarting at ${COLIMA_CPUS} CPU / ${COLIMA_MEMORY_GIB}G...`,
+      );
+    } else {
+      logInfo(`Colima profile '${alloc.vm}' is ${inst.status || 'not running'} — starting it...`);
+    }
     spawnSync('colima', ['stop', alloc.vm], { stdio: 'inherit' });
     const startArgs = [
       'start',
@@ -342,7 +392,7 @@ async function provisionColima(ctx: StageContext): Promise<void> {
         process.exit(1);
       }
     }
-    logOk(`Colima profile '${alloc.vm}' resized`);
+    logOk(`Colima profile '${alloc.vm}' running at ${COLIMA_CPUS} CPU / ${COLIMA_MEMORY_GIB}G`);
   }
 
   // The machine driver starts the VM in the background, so the socket can
