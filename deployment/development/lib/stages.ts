@@ -55,6 +55,12 @@ export const COMPOSE_FILE = path.join(DEV_DIR, 'docker-compose.worktree.yaml');
 const COLIMA_CPUS = 2;
 const COLIMA_MEMORY_GIB = 8;
 
+// How long to let worktree-manager's machine driver get the profile listed
+// before this stage creates it. The driver's `colima start` is detached, so
+// the profile normally appears within seconds; the wait only has to outlast
+// that, not the VM's whole boot.
+const COLIMA_APPEAR_GRACE_SECONDS = 45;
+
 // On Windows, spawnSync without `shell:true` only resolves .exe — it can't
 // find .cmd shims like corepack.cmd or pnpm.cmd. Enabling shell on Windows
 // routes through cmd.exe which respects PATHEXT.
@@ -297,6 +303,24 @@ export async function provision(ctx: StageContext): Promise<void> {
 }
 
 /**
+ * Start a Colima profile at the size Mini Infra needs, creating it if it does
+ * not exist. `colima start` is the create-and-start command, so one call
+ * covers both. Returns whether it succeeded.
+ *
+ * vz + virtiofs is much faster where the host supports it; a host that does
+ * not falls back to the portable defaults.
+ */
+function startColima(name: string): boolean {
+  const args = ['start', name, '--cpu', String(COLIMA_CPUS), '--memory', String(COLIMA_MEMORY_GIB)];
+  const vz = spawnSync('colima', [...args, '--vm-type', 'vz', '--mount-type', 'virtiofs'], {
+    stdio: ['inherit', 'inherit', 'pipe'],
+  });
+  if (vz.status === 0) return true;
+  logWarn('colima start with vz/virtiofs failed — retrying with the portable defaults');
+  return spawnSync('colima', args, { stdio: 'inherit' }).status === 0;
+}
+
+/**
  * Wait for a Colima profile to exist and stop changing state.
  *
  * The machine driver's `colima start` runs detached, so this hook can arrive
@@ -339,18 +363,32 @@ async function provisionColima(ctx: StageContext): Promise<void> {
 
   const wantMemoryBytes = COLIMA_MEMORY_GIB * 1024 * 1024 * 1024;
 
-  // worktree-manager's machine driver launches `colima start` and returns
-  // without waiting — a cold VM takes minutes, and blocking materialisation
-  // on it would stall `wt init`. So the profile is very likely still being
-  // created when this hook runs: wait for it to appear and settle rather
-  // than reading `colima list` once and giving up.
-  const inst = await waitForColimaProfile(alloc.vm);
+  // This stage owns one outcome: the VM is running, at the size Mini Infra
+  // needs. worktree-manager's machine driver owns the VM's name, the
+  // concurrency guard and teardown, and it launches `colima start` detached
+  // — a cold VM takes minutes and blocking materialisation on it would stall
+  // `wt init`. So the profile may be mid-creation when this hook runs, or
+  // already there from a previous run, or absent because the driver had
+  // nothing to do (the resource was materialised and only the VM went away).
+  //
+  // Give the driver a grace period to get the profile listed, then create it
+  // here if it still is not. Starting a profile that exists is what Colima
+  // does anyway, so this is idempotent either way.
+  let inst = await waitForColimaProfile(alloc.vm, COLIMA_APPEAR_GRACE_SECONDS);
   if (!inst) {
-    logError(
-      `Colima profile '${alloc.vm}' never appeared. worktree-manager's machine driver creates it ` +
-        `in the background — check 'wt doctor', then 'colima start ${alloc.vm}' by hand to see why.`,
+    logInfo(
+      `Colima profile '${alloc.vm}' is not listed after ${COLIMA_APPEAR_GRACE_SECONDS}s — creating it here...`,
     );
-    process.exit(1);
+    if (!startColima(alloc.vm)) {
+      logError(`colima start failed for profile '${alloc.vm}'`);
+      process.exit(1);
+    }
+    inst = await waitForColimaProfile(alloc.vm, 60);
+    if (!inst) {
+      logError(`Colima profile '${alloc.vm}' still is not listed after starting it.`);
+      logError(`Check it by hand: colima start ${alloc.vm}`);
+      process.exit(1);
+    }
   }
 
   const underProvisioned =
@@ -372,25 +410,9 @@ async function provisionColima(ctx: StageContext): Promise<void> {
       logInfo(`Colima profile '${alloc.vm}' is ${inst.status || 'not running'} — starting it...`);
     }
     spawnSync('colima', ['stop', alloc.vm], { stdio: 'inherit' });
-    const startArgs = [
-      'start',
-      alloc.vm,
-      '--cpu',
-      String(COLIMA_CPUS),
-      '--memory',
-      String(COLIMA_MEMORY_GIB),
-    ];
-    // vz + virtiofs is much faster where the host supports it; fall back to
-    // the portable defaults when it does not.
-    const vz = spawnSync('colima', [...startArgs, '--vm-type', 'vz', '--mount-type', 'virtiofs'], {
-      stdio: ['inherit', 'inherit', 'pipe'],
-    });
-    if (vz.status !== 0) {
-      const fallback = spawnSync('colima', startArgs, { stdio: 'inherit' });
-      if (fallback.status !== 0) {
-        logError(`colima start failed for profile '${alloc.vm}'`);
-        process.exit(1);
-      }
+    if (!startColima(alloc.vm)) {
+      logError(`colima start failed for profile '${alloc.vm}'`);
+      process.exit(1);
     }
     logOk(`Colima profile '${alloc.vm}' running at ${COLIMA_CPUS} CPU / ${COLIMA_MEMORY_GIB}G`);
   }
