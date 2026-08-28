@@ -4,35 +4,38 @@ This folder contains the per-worktree development workflow for running a fully i
 
 The legacy single-instance flow (`start.sh`/`docker-compose.yaml`) has been removed; the worktree flow is now the only supported path.
 
+Allocation is owned by [worktree-manager](../../docs/wt.md). It hands each worktree a slot and, from that slot, the ten host ports, the VM name, the compose project and the egress address pool; the spec is [wt.yaml](../../wt.yaml) at the repo root. Everything in this folder reads that allocation and decides nothing itself.
+
 ## Quick Start
 
-From the worktree root (works on macOS, Linux, and Windows — same command everywhere):
+From the worktree root (works on macOS, Linux, and Windows — same commands everywhere):
 
 ```bash
-pnpm worktree-env start --description "<short summary>"
+pnpm install
+wt init --description "<short summary>"
 ```
 
-On macOS this auto-selects Colima; on Windows it auto-selects WSL2 (first run also needs `scripts/build-wsl-base.ps1`).
+On macOS the VM is Colima; on Windows it is WSL2 (first run also needs `scripts/build-wsl-base.ps1`).
 
-`--description` is required on the first run; later re-runs reuse the stored description.
+`wt init` allocates the slot and runs every bring-up stage. Later re-runs are `wt start`, which re-runs the stages against the existing allocation. Both are idempotent.
 
-The script:
+Between them they:
 
-1. Picks a per-worktree VM driver (Colima on macOS, WSL2 on Windows) and creates the VM if needed.
-2. Allocates per-worktree UI / registry / Vault / Docker / HAProxy / NATS ports from `~/.mini-infra/worktrees.yaml`.
-3. Builds and pushes the **agent sidecar**, **egress gateway**, and **egress firewall agent** images to the per-worktree local Docker registry.
-4. Builds the **main app** image with those image tags baked in as build args.
-5. Runs `docker compose up` against `docker-compose.worktree.yaml` to bring up `registry` and `mini-infra`. The agent sidecar and the egress firewall agent are launched at runtime by the `mini-infra` server itself (not by compose), so they do not appear as compose services.
-6. Seeds credentials from `~/.mini-infra/dev.env` and writes `environment-details.xml` at the worktree root with the URL, admin login, and seeded resource IDs.
+1. Create the per-worktree VM (Colima profile on macOS, WSL2 distro on Windows) — worktree-manager's machine driver.
+2. Resolve the ten host ports, the compose project and the egress /22 from the slot, and export them to every stage.
+3. Build and push the **agent sidecar**, **egress gateway**, and **egress firewall agent** images to the per-worktree local Docker registry.
+4. Build the **main app** image with those image tags baked in as build args.
+5. Run `docker compose up` against `docker-compose.worktree.yaml` to bring up `registry` and `mini-infra`. The agent sidecar and the egress firewall agent are launched at runtime by the `mini-infra` server itself (not by compose), so they do not appear as compose services.
+6. Seed credentials from `~/.mini-infra/dev.env` and write `environment-details.xml` at the worktree root with the URL, admin login, and seeded resource IDs. The allocation itself is in `wt-env.yaml` beside it, and in the managed block of `.env`.
 
 ## Architecture
 
-The compose file brings up two containers per worktree:
+The compose file brings up two containers per worktree, in the compose project worktree-manager allocated (`mini-infra-<slug>-<slot>`):
 
 | Container | Purpose | Port |
 |-----------|---------|------|
-| `<profile>-registry` | Per-worktree local Docker registry | UI-port-aligned (5100–5199 range) |
-| `<profile>-mini-infra` | Main Mini Infra application | UI-port-aligned (3100–3199 range) |
+| `<project>-registry-1` | Per-worktree local Docker registry | 9210 + slot |
+| `<project>-mini-infra-1` | Main Mini Infra application | 9200 + slot |
 
 Two more containers are spawned at runtime by the server inside that VM:
 
@@ -45,32 +48,52 @@ Both runtime sidecars are managed end-to-end by `mini-infra-server`: pull image,
 
 ## Common Commands
 
-All commands run from the worktree root via the unified `worktree-env` CLI.
+Lifecycle is `wt`, run from the worktree root:
 
 ```bash
 # Bring up / rebuild
-pnpm worktree-env start
+wt start
 
-# List all worktree environments (URL, admin login, seed status)
-pnpm worktree-env list
+# This worktree's allocation
+wt show
 
-# Tear down (containers + VM + registry entry)
-pnpm worktree-env delete <profile>
+# Every worktree on this machine, across every adopted repo
+wt list
 
-# Sweep merged-PR worktrees (also runs hourly via launchd on macOS)
-pnpm worktree-env cleanup --dry-run
+# Tear down: safety checks, stack down, VM deleted, slot freed, tree removed
+wt rm --slug <slug>
 
-# Install/uninstall the macOS launchd cleanup agent
-pnpm worktree-env install-cleanup-agent
-pnpm worktree-env install-cleanup-agent --remove
+# Sweep merged-PR worktrees
+wt cleanup --dry-run
 
-# Resolve the dev URL from the generated environment manifest
+# What is broken, and the command that fixes each thing
+wt doctor
+```
+
+The individual stages are available directly when you want to re-run one:
+
+```bash
+pnpm worktree-env provision   # VM ready, host deps synced       (install hook)
+pnpm worktree-env prepull     # registry up, base images pulled  (prepull hook)
+pnpm worktree-env build       # sidecar images, then the app     (build hook)
+pnpm worktree-env up          # compose up, wait for healthy     (start hook)
+pnpm worktree-env seed        # seed the instance via its API    (seed hook)
+pnpm worktree-env health      # probe /health                    (health hook)
+
+pnpm worktree-env status              # print this worktree's endpoints
+pnpm worktree-env seed --force        # re-seed an already-seeded instance
+pnpm worktree-env down --volumes      # stop and destroy the data, keep the VM
+```
+
+And the endpoints, read back from the manifest the seeder wrote:
+
+```bash
 MINI_INFRA_URL=$(xmllint --xpath 'string(//environment/endpoints/ui)' environment-details.xml)
 NATS_CLIENT_URL=$(xmllint --xpath 'string(//environment/endpoints/natsClient)' environment-details.xml)
 NATS_MONITOR_URL=$(xmllint --xpath 'string(//environment/endpoints/natsMonitor)' environment-details.xml)
 ```
 
-Run `pnpm worktree-env <command> --help` for command-specific options.
+Run `pnpm worktree-env help` for the stage list and `wt help` for the lifecycle verbs.
 
 ### Logging
 
@@ -80,7 +103,7 @@ The console shows status-only output: completed milestones, warnings, and errors
 tail -f deployment/development/worktree-env.log
 ```
 
-Set `WORKTREE_ENV_VERBOSE=1` in front of any `pnpm worktree-env` invocation to mirror the verbose chatter to the console.
+Set `WORKTREE_ENV_VERBOSE=1` in front of `wt init` / `wt start` (or a direct stage invocation) to mirror the verbose chatter to the console.
 
 ## When to use this vs `pnpm dev`
 

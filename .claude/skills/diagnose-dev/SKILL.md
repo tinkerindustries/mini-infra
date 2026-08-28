@@ -15,7 +15,7 @@ You're debugging a running instance of Mini Infra — a Docker host management w
   MINI_INFRA_URL=$(xmllint --xpath 'string(//environment/endpoints/ui)' environment-details.xml)
   ```
 
-  If `environment-details.xml` is absent, the user is on the legacy single-instance flow — fall back to `http://localhost:3005`.
+  If `environment-details.xml` is absent the environment has not been seeded. Run `wt show` to confirm the worktree is initialised, then `wt start` to bring it up; `wt show --json` gives the allocated ports on their own.
 - **Container name**: `mini-infra-dev`
 - **Docker Compose file**: `deployment/development/docker-compose.yaml`
 - **Source code**: available in the current working directory
@@ -159,7 +159,7 @@ docker exec mini-infra-dev ps aux
 
 #### Vault locked? re-unlock
 
-The dev seeder bootstraps the managed Vault with a fixed passphrase and unlocks it on every `pnpm worktree-env start` run. If you see `permission denied` from Vault, `Operator passphrase must be unlocked`, or `/api/vault/status` reporting `passphrase.state: locked`, the in-memory passphrase has dropped (typically after an in-place container restart). Re-unlock without a UI round-trip:
+The dev seeder bootstraps the managed Vault with a fixed passphrase and unlocks it on every `wt start` run. If you see `permission denied` from Vault, `Operator passphrase must be unlocked`, or `/api/vault/status` reporting `passphrase.state: locked`, the in-memory passphrase has dropped (typically after an in-place container restart). Re-unlock without a UI round-trip:
 
 ```bash
 API_KEY=$(xmllint --xpath 'string(//admin/apiKey)' environment-details.xml)
@@ -173,7 +173,7 @@ curl -s -H "x-api-key: $API_KEY" "$MINI_INFRA_URL/api/vault/status" \
   | jq '.data | {reachable, sealState, passphrase: .passphrase.state}'
 ```
 
-If `<vaultPassphrase>` is missing from the XML (older worktrees pre-auto-unlock), re-run `pnpm worktree-env start` — the seeder will repopulate it.
+If `<vaultPassphrase>` is missing from the XML (older worktrees pre-auto-unlock), re-run `wt start` — the seeder will repopulate it.
 
 #### Using Playwright for UI issues
 

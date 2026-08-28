@@ -14,31 +14,37 @@ When designing the solution make sure you pick a DRY and well though out solutio
 
 For parallel dev work, each git worktree runs its own fully isolated Mini Infra instance on its own VM. This is the default flow — use it instead of fighting over a single dev daemon when you have multiple WIPs in flight. The VM driver is auto-selected per platform: **Colima** on macOS, **WSL2** on Windows. Override via the `MINI_INFRA_DRIVER` env var (`colima` or `wsl`).
 
-The whole flow is driven by a single CLI — `pnpm worktree-env <command>` — defined in [deployment/development/worktree-env.ts](deployment/development/worktree-env.ts). The same commands work on macOS, Linux, and Windows; there are no platform-specific `.sh`/`.ps1` wrappers anymore. Run `pnpm worktree-env --help` to list the subcommands.
+Allocation is owned by [worktree-manager](docs/wt.md) — the `wt` CLI. It hands each worktree a slot and, from that slot, the ten host ports, the VM name, the compose project and the egress address pool. This repo's own bring-up lives in [deployment/development/](deployment/development/) and is driven entirely from that allocation; it decides nothing itself. The spec is [wt.yaml](wt.yaml) at the repo root.
 
-**Windows users:** before your first run, build the cached Alpine + dockerd base tarball with `.\scripts\build-wsl-base.ps1` (one-time). After that, use `pnpm worktree-env <command>` exactly as the steps below describe. See [docs/user/wsl2-reference.md](docs/user/wsl2-reference.md) for full detail.
+**First run on a machine:** reserve this repo's port band once with `wt bands reserve --base ui=9200 --base registry=9210 --base vault=9220 --base docker=9230 --base haproxy_http=9240 --base haproxy_https=9250 --base haproxy_stats=9260 --base haproxy_dataplane=9270 --base nats_client=9280 --base nats_monitor=9290`. The band is machine-local, so a fresh clone needs it and an existing one does not.
 
-1. **Spin up.** From the worktree root, run `pnpm worktree-env start --description "<short summary of what this worktree is for>"`. The `--description` flag (≤10 words) is required on the first run for a new worktree — without it the script drops into an interactive prompt. Optionally also pass `--long-description "<≤50 words>"`. Subsequent re-runs reuse the stored description, so the flag is only needed once. This creates (or reuses) a Colima profile / WSL2 distro named after the worktree directory, allocates stable UI/registry/vault/docker ports from `~/.mini-infra/worktrees.yaml`, builds + starts the stack, then seeds credentials from `~/.mini-infra/dev.env` so the onboarding wizard is skipped.
+**Windows users:** before your first run, build the cached Alpine + dockerd base tarball with `.\scripts\build-wsl-base.ps1` (one-time). See [docs/user/wsl2-reference.md](docs/user/wsl2-reference.md) for full detail.
 
-   **Seed profile.** Pass `--seed-profile minimal` on first run to skip the vault+nats stack, the egress-fw-agent stack, the local environment (and thus the egress-gateway), and the HAProxy stack — useful when you're working on parts of the app that don't need any of those. Default is `--seed-profile full`, which seeds everything as before. The chosen profile is persisted in `~/.mini-infra/worktrees.yaml` alongside the description, so subsequent re-runs without the flag reuse it.
+1. **Create the worktree.** Claude Code's `WorktreeCreate` hook does this, or by hand: `git worktree add "$(wt spec path --slug <slug>)" -b claude/<slug>`. Worktrees live at `.claude/worktrees/<slug>`.
 
-2. **Find the URL.** The script writes `environment-details.xml` at the worktree root with the UI URL, Vault URL, Docker host, seeded resource IDs, and connected-service status. Read from it instead of assuming a port (see Browser Automation below for the one-liner). Worktree-unique ports are allocated for the UI (3100-3199), local registry (5100-5199), Vault (8200-8299), and dockerd over TCP on the WSL2 driver (2500-2599) — every parallel instance gets its own slot so multiple Vaults don't collide on `localhost:8200`.
+2. **Spin up.** From the worktree root, run `pnpm install`, then `wt init --description "<short summary of what this worktree is for>"` followed by `wt start`. `init` allocates the slot, creates the VM, writes `wt-env.yaml` and the managed block in `.env`, and runs the bring-up hooks; `start` re-runs the bring-up hooks on their own. Both are idempotent — re-running repairs.
 
-3. **Edit code normally.** The `server/` / `client/` / `lib/` layout and workspace rules below still apply.
+   **Seed profile.** Pass `--param seed_profile=minimal` to `wt init` to skip the vault+nats stack, the egress-fw-agent stack, the local environment (and thus the egress-gateway), and the HAProxy stack — useful when you're working on parts of the app that don't need any of those. The default is `full`, which seeds everything. The choice is sticky: worktree-manager records it in `wt-env.yaml` and later runs reuse it.
 
-4. **Rebuild after changes.** Re-run `pnpm worktree-env start`. It's idempotent — VM stays up, image rebuilds, container recreates, seeder skips already-seeded steps.
+3. **Find the URL.** `wt show` prints this worktree's allocation; `wt show --json` is the machine-readable form. The seeder also writes `environment-details.xml` at the worktree root with the UI URL, Vault URL, Docker host, admin credentials, seeded resource IDs and connected-service status — that file is where the credentials live, and the skills read it. Ports are `<base> + <slot>`, so slot 3's UI is 9203, its registry 9213, its vault 9223, and so on: every port for a given slot ends in the slot digit.
 
-5. **Test.** Use the `test-dev` or `diagnose-dev` skills; both resolve the URL from `environment-details.xml` automatically.
+4. **Edit code normally.** The `server/` / `client/` / `lib/` layout and workspace rules below still apply.
 
-6. **List everything.** Run `pnpm worktree-env list` from anywhere to see every registered environment (URL, admin login, path, seed status) in a table. `--wide` also prints the API key and admin password; `--json` emits the raw registry.
+5. **Rebuild after changes.** Re-run `wt start`. The VM stays up, images rebuild, containers recreate, and the seeder skips an already-seeded instance.
 
-7. **Tear down this worktree.** Run `pnpm worktree-env delete <profile>` to wipe a single worktree's runtime — it runs `docker compose down -v` against the worktree's project, deletes the per-worktree VM/distro, and removes the registry entry in one shot. Pass `--force` to skip the confirmation prompt, or `--keep-vm` to drop only the containers and the registry entry while leaving the VM up. The git worktree itself is left alone; run `git worktree remove <path>` afterwards if you want it gone too. To bypass the helper entirely: `colima delete <profile> --data --force` on macOS or `wsl --unregister mini-infra-<profile>` on Windows. The profile name is the worktree directory basename (lowercased, sanitised to `[a-z0-9-]`).
+6. **Test.** Use the `test-dev` or `diagnose-dev` skills; both resolve the URL from `environment-details.xml` automatically.
 
-8. **Bulk cleanup (macOS).** `pnpm worktree-env cleanup --dry-run` previews which merged-PR worktrees would be cleaned. Drop `--dry-run` to actually clean. Install the macOS launchd agent that runs cleanup hourly via `pnpm worktree-env install-cleanup-agent` (use `--remove` to uninstall).
+7. **List everything.** `wt list` shows every worktree across every adopted repo on this machine; `wt doctor` reports anything broken and names the command that fixes it.
+
+8. **Tear down this worktree.** `wt rm --slug <slug>` runs the safety checks, tears the stack down, deletes the VM, frees the slot and removes the git worktree in one shot. This repo refuses removal on uncommitted changes, unpushed commits **and** an open PR, so `gh` must be installed and authenticated. To bypass entirely: `colima delete mini-infra-<slug>-<slot> --data --force` on macOS, or `wsl --unregister mini-infra-<slug>-<slot>` on Windows.
+
+9. **Bulk cleanup.** `wt cleanup --dry-run` previews which merged-PR worktrees would be swept; drop `--dry-run` to act. The coordinator also sweeps on its own schedule. Both require a merged pull request regardless of the `removal:` policy above.
+
+The stages the hooks run are `pnpm worktree-env <stage>` — `provision`, `prepull`, `build`, `up`, `seed`, `health`, plus `status` and `down`. You rarely invoke them directly; `wt init` and `wt start` sequence them with the allocation in the environment.
 
 Run `git` commands from inside the worktree directory, not the main checkout — mixing shells between the two is the main way commits land on the wrong branch.
 
-See [docs/user/colima-reference.md](docs/user/colima-reference.md) for Colima detail (macOS) or [docs/user/wsl2-reference.md](docs/user/wsl2-reference.md) for WSL2 detail (Windows).
+See [docs/wt.md](docs/wt.md) for the worktree-manager reference, [docs/user/colima-reference.md](docs/user/colima-reference.md) for Colima detail (macOS) or [docs/user/wsl2-reference.md](docs/user/wsl2-reference.md) for WSL2 detail (Windows).
 
 ## Browser Automation & Testing
 
@@ -55,10 +61,10 @@ playwright-cli open --persistent "$MINI_INFRA_URL"
 
 * Always resolve the frontend/backend URL via `environment-details.xml` (see above) instead of hardcoding a localhost port — Vite proxies client traffic to the backend through whichever port the current worktree instance is bound to.
 * **Package manager is pnpm** (pinned in `package.json` via the `packageManager` field). On a fresh checkout run `corepack enable` once, then `pnpm install`. Don't use `npm install` at the repo root — it will fight with the pnpm lockfile.
-* **Fresh worktree? Run `pnpm install` first — always, before anything else.** Worktrees do not share `node_modules` with the main checkout. This applies to **every** `pnpm` command in a fresh worktree, including `pnpm worktree-env <command>` itself (the CLI runs through `tsx`, which lives in `node_modules` — without it you'll see `sh: tsx: command not found` and `Local package.json exists, but node_modules missing`). Same goes for `pnpm build`, `pnpm --filter ... test`, `pnpm --filter ... lint`, etc. If `node_modules/` is missing at the worktree root (or you see `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` / `tsc: command not found`), run `pnpm install` from the worktree root before retrying. Also run `npm install` inside `update-sidecar/` and `agent-sidecar/` before invoking their test or build scripts.
+* **Fresh worktree? Run `pnpm install` first — always, before anything else.** Worktrees do not share `node_modules` with the main checkout. This applies to **every** `pnpm` command in a fresh worktree, including the `pnpm worktree-env <stage>` commands `wt` runs as hooks (they go through `tsx`, which lives in `node_modules` — without it you'll see `sh: tsx: command not found` and `Local package.json exists, but node_modules missing`). `wt init` runs `pnpm install` itself in its provision stage, but only after the VM is up, so install first when running anything by hand. Same goes for `pnpm build`, `pnpm --filter ... test`, `pnpm --filter ... lint`, etc. If `node_modules/` is missing at the worktree root (or you see `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` / `tsc: command not found`), run `pnpm install` from the worktree root before retrying. Also run `npm install` inside `update-sidecar/` and `agent-sidecar/` before invoking their test or build scripts.
 * **Always run commands from the project root**. Never `cd` into `client/`, `server/`, or `lib/` subdirectories. Use `--filter <workspace>` flags instead (e.g., `pnpm --filter mini-infra-server test`).
 * **Sidecar folders are NOT in the pnpm workspace and still use npm.** `update-sidecar/` and `agent-sidecar/` are standalone packages with their own `package-lock.json` — you must `cd` into them to run npm commands (e.g., `cd agent-sidecar && npm test`), then `cd` back to the project root afterwards.
-* When a change is made for the local dev environment rebuild the containers — run `pnpm worktree-env start` (writes the `environment-details.xml`). The legacy single-instance `start.sh` flow has been removed; the worktree flow is now the only supported path.
+* When a change is made for the local dev environment rebuild the containers — run `wt start` from the worktree root. It re-runs the build, up, seed and health hooks against this worktree's existing allocation.
 
 ## Project Overview
 
@@ -218,3 +224,24 @@ These are the most commonly missed patterns. See `server/CLAUDE.md` for the full
 * **All configuration mutations require `userId`** for audit trail — `set()`, `delete()`, and `create()` methods all track who made the change.
 * **Use `Channel.*` and `ServerEvent.*` constants** for Socket.IO — never use raw strings for event names or channels.
 * In typescript avoid the use of any. This is OK to clean up later but its good to have strongly typed variables.
+# --- managed by wt; edits below are overwritten ---
+# wt-field: app=mini-infra
+# wt-field: band docker=9230
+# wt-field: band haproxy_dataplane=9270
+# wt-field: band haproxy_http=9240
+# wt-field: band haproxy_https=9250
+# wt-field: band haproxy_stats=9260
+# wt-field: band nats_client=9280
+# wt-field: band nats_monitor=9290
+# wt-field: band registry=9210
+# wt-field: band ui=9200
+# wt-field: band vault=9220
+# wt-field: descriptor=wt-env.yaml
+# wt-field: resources=ui, registry, vault, docker, haproxy_http, haproxy_https, haproxy_stats, haproxy_dataplane, nats_client, nats_monitor, vm, egress, compose
+# wt-field: shared={home}/.mini-infra/dev.env, {home}/.mini-infra/wsl-base.tar, the Cloudflare zone named by dev.env's CLOUDFLARE_API_TOKEN, the Azure Blob Storage account named by dev.env's AZURE_STORAGE_CONNECTION_STRING
+# wt-field: worktrees=.claude/worktrees/{slug}
+This repository uses per-worktree environments.
+- Never hardcode a port or a path: read them with `wt show`.
+- Something else creates the worktree; `wt init` attaches to it.
+See docs/wt.md for the full reference.
+# --- end ---

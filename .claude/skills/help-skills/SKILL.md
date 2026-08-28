@@ -49,7 +49,7 @@ For a one-off task (a bugfix, a small chore, anything that doesn't need a phased
 
 ### 2. Working a task
 
-- **`setup-worktree`** — scaffolds a fresh git worktree from main with `pnpm install` and a backgrounded `pnpm worktree-env start`. Use it for any isolated piece of work, whether it's one phase of a plan or an ad-hoc fix.
+- **`setup-worktree`** — scaffolds a fresh git worktree from main with `pnpm install` and a backgrounded `wt init`. Use it for any isolated piece of work, whether it's one phase of a plan or an ad-hoc fix.
 - Write the code, run the relevant build/lint/unit tests, and smoke-test with `test-dev` (see below) before opening a PR.
 
 ### 3. Review loop

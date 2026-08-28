@@ -12,13 +12,13 @@
 // parallel across the three images) when no host context is available.
 //
 // The default builder cache on the host context is reused across worktrees,
-// so a second `worktree-env start` typically hits cached layers and finishes
+// so a second bring-up typically hits cached layers and finishes
 // the build phase in seconds.
 import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { logInfo, logOk, logWarn } from './log.js';
-import { MINI_INFRA_HOME } from './registry.js';
+import { MINI_INFRA_HOME } from './paths.js';
 
 const NEEDS_SHELL = process.platform === 'win32';
 

@@ -59,7 +59,7 @@ export async function bootstrapNatsSystemResources(): Promise<void> {
   // Wait for the bus to be ready. Generous timeout because this fire-and-
   // forget call runs concurrently with Vault unlock + creds rotation on
   // fresh-worktree / dev-env boots, and "no retry until next server boot"
-  // is too coarse — `pnpm worktree-env start` runs the seeded server
+  // is too coarse — the dev bring-up (`wt start`) runs the seeded server
   // directly, and an EgressFwEvents stream missing for that boot's whole
   // lifetime means the egress-log-ingester never attaches and the
   // fw-agent's NFLOG stream piles up unconsumed. 5 minutes is well past
