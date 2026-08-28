@@ -203,6 +203,23 @@ resolves `COMPOSE_PROJECT_NAME` from `{app}-{slug}-{slot}` directly, and
 `lib/allocation.ts` evaluates the same template when it reads the
 descriptor instead of the hook environment.
 
+**Teardown was then re-proved on a fresh worktree** under the corrected
+spec, with the agent-sidecar running and attached to the compose network —
+the exact condition that had blocked the first two. `wt rm` completed in a
+single pass: the machine driver deleted the VM, the slot was freed, the
+git worktree was removed, and `wt doctor` came back with nothing.
+
+**One migration hazard is worth knowing about.** Removing a resource from
+the spec strands any entry that still carries it:
+
+    survived: resource compose (the spec no longer declares this
+    resource; it cannot be torn down without its spec row)
+
+The slot cannot be freed, and the only way out is to put the row back
+temporarily, tear the worktree down, and remove the row again. So the
+order is: tear down every worktree first, then change the spec. Both proof
+worktrees had to be recovered this way.
+
 **A latent bug in the repository also surfaced here.** The dev compose
 healthcheck probed `localhost:5000`, the registry service's internal port,
 while the app listens on 5005. The container had been marked unhealthy
