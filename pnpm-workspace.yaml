@@ -20,9 +20,9 @@ overrides:
   lodash: ^4.18.0
   defu: ^6.1.5
   path-to-regexp: ^8.4.0
-  js-yaml: ^5.0.0
+  js-yaml: 5.2.2
   '@azure/msal-node': ^5.1.5
-  '@hono/node-server': ^1.19.14
+  '@hono/node-server': 1.19.15
   # TEMPORARY (dep-update branch): vite 8.1.0 (+ its rolldown 1.1.3 native
   # bindings) was <5 days old when the workspace was bumped to vitest 4.1.9,
   # so the cooldown above blocked it. Pin vite to the newest installable
@@ -31,22 +31,37 @@ overrides:
   vite: ~8.0.16
   # Security pins for open Dependabot alerts on transitive pnpm-lock deps
   # (the npm-side lockfiles already carry these fixes). Each value is the
-  # first patched version from the GitHub advisory; the caret lets future
-  # patch releases float. undici and brace-expansion are major-scoped because
-  # a second, non-vulnerable major (undici 8.x, brace-expansion 2.x) is also
-  # installed and must be left untouched.
-  protobufjs: ^7.6.3
+  # first patched version from the GitHub advisory; pinned exact rather than
+  # caret so the resolver can't take a newer release than was verified.
+  # undici and brace-expansion are major-scoped because a second,
+  # non-vulnerable major (undici 8.x, brace-expansion 2.x) is also installed
+  # and must be left untouched.
+  protobufjs: 7.6.5
   '@protobufjs/utf8': ^1.1.1
-  hono: ^4.12.25
+  hono: 4.12.34
   ws: ^8.21.0
-  fast-uri: ^3.1.2
+  fast-uri: 3.1.5
   fast-xml-builder: ^1.1.7
-  ip-address: ^10.1.1
+  ip-address: 10.3.1
   qs: ^6.15.2
   '@grpc/grpc-js': ^1.14.4
   '@babel/core': ^7.29.6
-  'undici@7': ^7.28.0
-  'brace-expansion@5': ^5.0.6
+  'undici@7': 7.29.0
+  'undici@8': 8.9.0
+  'brace-expansion@5': 5.0.9
+  'brace-expansion@2': 2.1.4
+  # dependabot-559: security pins for advisories with no prior override.
+  adm-zip: 0.6.0
+  deepmerge-ts: 8.0.0
+  engine.io: 6.6.7
+  fast-xml-parser: 5.10.1
+  nanoid: 3.3.18
+  postcss: 8.5.23
+  react-router: 7.18.2
+  shell-quote: 1.9.0
+  socket.io-parser: 4.2.7
+  valibot: 1.4.2
+  body-parser: 2.3.0
 
 # pnpm 10 blocks postinstall scripts by default. Native modules and
 # Prisma tooling need their install scripts to run, so allow them.

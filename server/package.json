@@ -67,7 +67,7 @@
         "@octokit/rest": "^22.0.1",
         "@prisma/adapter-better-sqlite3": "^7.7.0",
         "@prisma/client": "^7.7.0",
-        "adm-zip": "^0.5.17",
+        "adm-zip": "^0.6.0",
         "argon2": "^0.44.0",
         "better-sqlite3": "^12.11.1",
         "cloudflare": "^6.5.0",

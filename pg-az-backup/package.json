@@ -9,5 +9,8 @@
   },
   "dependencies": {
     "googleapis": "^173.0.0"
+  },
+  "overrides": {
+    "brace-expansion": "2.1.4"
   }
 }
