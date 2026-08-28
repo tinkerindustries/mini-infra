@@ -70,7 +70,7 @@
         "adm-zip": "^0.6.0",
         "argon2": "^0.44.0",
         "better-sqlite3": "^12.11.1",
-        "cloudflare": "^6.5.0",
+        "cloudflare": "^7.1.0",
         "config": "^4.4.2",
         "cookie-parser": "^1.4.7",
         "cors": "^2.8.6",
