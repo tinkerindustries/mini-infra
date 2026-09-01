@@ -17,12 +17,12 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/dockerode": "^4.0.1",
-    "@types/node": "^26.0.1",
-    "eslint": "^10.5.0",
-    "globals": "^17.7.0",
-    "tsx": "^4.22.4",
+    "@types/node": "^26.4.0",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.62.0"
+    "typescript-eslint": "^8.68.0"
   },
   "overrides": {
     "brace-expansion": "5.0.9",
