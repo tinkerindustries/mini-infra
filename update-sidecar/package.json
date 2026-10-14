@@ -11,18 +11,18 @@
   },
   "dependencies": {
     "dockerode": "^5.0.1",
-    "pino": "^10.3.1",
-    "pino-pretty": "^13.1.3"
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/dockerode": "^4.0.1",
-    "@types/node": "^26.0.1",
-    "eslint": "^10.5.0",
-    "globals": "^17.7.0",
-    "tsx": "^4.22.4",
+    "@types/node": "^26.6.4",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.62.0"
+    "typescript-eslint": "^8.71.1"
   },
   "overrides": {
     "brace-expansion": "5.0.9",
